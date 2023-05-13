@@ -1,0 +1,287 @@
+---
+title: "Data Analytics Project"
+output: html_notebook
+---
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+```
+
+```{r}
+#reading dataset
+hrm<-read.csv('attrition.csv')
+head(hrm)
+```
+
+
+```{r}
+#DATA PREPROCESSING
+library(ggplot2)
+library(reshape2)
+
+# Calculate the correlation matrix
+corr_matrix <- cor(hrm[-2])
+
+# Convert the correlation matrix to a long format using melt()
+corr_matrix_melt <- melt(corr_matrix)
+
+# Create the heatmap using ggplot2
+ggplot(corr_matrix_melt, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Correlation Heatmap")
+# Convert the correlation matrix to a data frame
+corr_df <- as.data.frame(as.table(corr_matrix))
+
+# Order the correlation matrix by ascending order of correlation coefficients
+ordered_corr_df <- corr_df[order(abs(corr_df$Freq)),]
+
+# Get the features with the lowest correlation coefficients
+lowest_corr_features <- unique(c(ordered_corr_df$Var1[1:5], ordered_corr_df$Var2[1:5]))
+
+# Print the features with the lowest correlation coefficients
+print(lowest_corr_features)
+
+
+
+set.seed(122)
+library(dplyr)
+library(caret)
+set.seed(123)
+train_index <- createDataPartition(hrm$Attrition, p = 0.7, list = FALSE)
+train <- hrm[train_index, ]
+testdf <- hrm[-train_index, ]
+
+
+```
+
+
+
+```{r}
+#2) K - NEAREST NEIGHBOUR
+
+#Requiring the package which has K-NN regression
+require(FNN)
+library(caret)
+
+
+#SELECTING THE BEST HYPERPARAMETERS
+knn_model <- train(as.factor(Attrition) ~ ., data = train, method = "knn", 
+                   trControl = trainControl(method = "cv", number = 10),
+                   tuneLength = 10, metric="Accuracy") 
+print(knn_model$bestTune)
+print(knn_model$results)
+
+knn_model <- train(Attrition ~ ., data = train, method = "knn", 
+                   trControl = trainControl(method = "cv", number = 10),
+                   tuneGrid = expand.grid(k = 5))
+
+# Make predictions on the test set
+predictions <- predict(knn_model, newdata = testdf)
+predictions <- as.integer(predictions)
+# Calculate accuracy
+cm <- table(predictions,testdf$Attrition)
+accuracy <- sum(diag(cm)) / sum(cm)
+
+print(paste("Accuracy of KNN model:", accuracy))
+
+```
+```{r}
+#DECISION TREE
+
+#setting seed for reproducable results
+set.seed(122)
+
+library(datasets)
+library(caTools)
+library(party)
+library(dplyr)
+library(magrittr)
+library(DT)
+library(rpart)
+library(rattle)
+library(rpart.plot)
+library(RColorBrewer)
+library(caret)
+## SELECTING THE BEST HYPERPARAMETERS
+train_control <- trainControl(method = "cv", number = 5)
+hyperparams <- expand.grid(
+   
+cp = seq(0.001, 0.1, length.out = 10)
+ 
+)
+model <- train(
+  as.factor(Attrition) ~ .,
+  data = train,
+  method = "rpart",
+  tuneGrid = hyperparams,
+  trControl = train_control,
+  metric = "Accuracy"
+)
+print(model$bestTune)
+print(model$results)
+#MODEL
+tree <- rpart(Attrition~., train, method = "class", cp=model$bestTune, minsplit=2, minbucket=1)
+fancyRpartPlot(tree)
+pred_test <- predict(tree, testdf, type = "class")
+# Calculate the accuracy of the model
+accuracy <- sum(pred_test == testdf$Attrition) / nrow(testdf)
+
+# Print the accuracy
+print(paste("The accuracy of the model is: ",accuracy*100,"%"))
+
+```
+```{r}
+#RANDOM FOREST
+
+#SELECTING THE BEST PARAMETERS
+# define the training control
+train_control <- trainControl(method = "cv", number = 10)
+
+# define the tuning grid
+tuning_grid <- expand.grid(mtry = c(1, 2, 3, 4, 5))
+
+# train the model
+model <- train(as.factor(Attrition) ~ ., data = train, method = "rf", trControl = train_control, tuneGrid = tuning_grid)
+
+# print the best tuning parameters and accuracy
+print(paste("Best Parameters: ", model$bestTune, "\n"))
+model$results
+print(rf_tune)
+
+
+```
+
+```{r}
+library(randomForest)
+library(caTools)
+library(caret)
+
+scaled = preProcess(hrm, method=c("range"))
+hrm = predict(scaled, hrm)
+    
+
+set.seed(42)
+
+model = randomForest(x = train[-2], y = train$Attrition, ntree=100,mtry=3)
+model
+
+y_pred = predict(model, newdata = testdf[-2])
+y_pred <- ifelse(y_pred >= 0.5, 1, 0)
+
+
+# Confusion Matrix
+confusion_mtx = table(testdf[, 2], y_pred)
+confusion_mtx
+
+# Plotting model
+plot(model)
+
+# Importance plot
+varImpPlot(model)
+
+# Accuracy
+accuracy_Test = sum(diag(confusion_mtx)) / sum(confusion_mtx)
+paste('Accuracy for test', accuracy_Test*100, '%')
+
+```
+
+
+
+```{r}
+### ENSEMBLE MODEL
+
+library(randomForest)
+library(caTools)
+library(party)
+
+
+# Train the Decision Tree model
+tree_model <- rpart(Attrition~., train, method = "class",cp=0.001, minsplit=2, minbucket=1)
+
+# Train the Random Forest model
+set.seed(42)
+rf_model <- randomForest(x = train[-2], y = train$Attrition, ntree=100,mtry=10)
+
+# Make predictions using both models
+tree_pred <- predict(tree_model, testdf, type = "class")
+rf_pred <- predict(rf_model, newdata = testdf[-2])
+
+# Combine the predictions using majority voting
+ensemble_pred <- ifelse((as.numeric(tree_pred) + as.numeric(rf_pred)) > 1, 1, 0)
+
+
+# Compute accuracy of the ensemble model
+ensemble_conf <- table(testdf$Attrition, ensemble_pred)
+ensemble_acc <- sum(diag(ensemble_conf))/sum(ensemble_conf)
+paste("The accuracy of the ensemble model is:", ensemble_acc*100, "%")
+
+
+```
+
+```{r}
+#PARAMETER SETTING
+tuneGrid <- expand.grid(sigma = c(0.1, 0.2, 0.3,0.4,0.5),
+                        C = c(1, 10, 100,500,1000))
+
+svmFit <- train(as.factor(Attrition) ~ ., data = train, method = "svmRadial", 
+                tuneGrid = tuneGrid, trControl = trainControl(method = "cv", number = 5),metric="Accuracy")
+
+svmFit$bestTune
+svmFit$results
+
+```
+
+
+```{r}
+
+### SUPPORT VECTOR MACHINE MODEL
+
+# Load required libraries
+library(e1071)
+
+# Split data into training and testing sets
+set.seed(122)
+split <- sample.split(hrm$Attrition, SplitRatio = 0.7)
+train <- hrm[split, ]
+test <- hrm[!split, ]
+
+# Convert target variable to factor
+train$Attrition <- as.factor(train$Attrition)
+
+# Train a SVM model
+svm_model_linear <- svm(Attrition ~ ., data = train, kernel = "linear",sigma=0.3,cost=1)
+svm_model_poly <- svm(Attrition ~ ., data = train, kernel = "polynomial",sigma=0.3,cost=1)
+svm_model_radial <- svm(Attrition ~ ., data = train, kernel = "radial",sigma=0.3,cost=1)
+svm_model_sigmoid <- svm(Attrition ~ ., data = train, kernel = "sigmoid",sigma=0.3,cost=1)
+
+# Make predictions on test set
+svm_pred_linear <- predict(svm_model_linear, testdf, type="class")
+svm_pred_poly <- predict(svm_model_poly, testdf, type="class")
+svm_pred_radial <- predict(svm_model_radial, testdf, type="class")
+svm_pred_sigmoid <- predict(svm_model_sigmoid, testdf, type="class")
+
+# Compute accuracy of the SVM model
+svm_conf <- table(testdf$Attrition, svm_pred_linear)
+svm_acc <- sum(diag(svm_conf))/sum(svm_conf)
+paste("The accuracy of the SVM model with linear kernel is:", svm_acc*100, "%")
+
+svm_conf <- table(testdf$Attrition, svm_pred_poly)
+svm_acc <- sum(diag(svm_conf))/sum(svm_conf)
+paste("The accuracy of the SVM model with polynomial kernel is:", svm_acc*100, "%")
+
+svm_conf <- table(testdf$Attrition, svm_pred_radial)
+svm_acc <- sum(diag(svm_conf))/sum(svm_conf)
+paste("The accuracy of the SVM model with radial basis kernel is:", svm_acc*100, "%")
+
+svm_conf <- table(testdf$Attrition, svm_pred_sigmoid)
+svm_acc <- sum(diag(svm_conf))/sum(svm_conf)
+paste("The accuracy of the SVM model with sigmoid kernel is:", svm_acc*100, "%")
+
+svm_df_radial <- data.frame(testdf, pred = svm_pred_radial)
+
+```
+
